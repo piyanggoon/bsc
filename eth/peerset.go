@@ -534,7 +534,7 @@ func (ps *peerSet) peersWithoutBlock(hash common.Hash) []*ethPeer {
 
 	list := make([]*ethPeer, 0, len(ps.peers))
 	for _, p := range ps.peers {
-		if !p.KnownBlock(hash) {
+		if p.Stats().SharedBlocks > 0 && !p.KnownBlock(hash) {
 			list = append(list, p)
 		}
 	}
@@ -555,7 +555,7 @@ func (ps *peerSet) peersWithoutTransaction(hash common.Hash) []*ethPeer {
 			log.Debug("skip EVN peer with no tx forwarding feature", "peer", p.ID())
 			continue
 		}
-		if !p.KnownTransaction(hash) {
+		if p.Stats().SharedTxs > 0 && !p.KnownTransaction(hash) {
 			list = append(list, p)
 		}
 	}

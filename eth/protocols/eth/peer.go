@@ -66,6 +66,7 @@ type Peer struct {
 	version         uint              // Protocol version negotiated
 	statusExtension *UpgradeStatusExtension
 
+	stats   PeerStats
 	lagging bool        // lagging peer is still connected, but won't be used to sync.
 	head    common.Hash // Latest advertised head block hash
 	td      *big.Int    // Latest advertised head block total difficulty
@@ -88,6 +89,13 @@ type Peer struct {
 	lock   sync.RWMutex  // Mutex protecting the internal fields
 }
 
+type PeerStats struct {
+	SharedTxs      uint64
+	SharedBlocks   uint64
+	AnnounceTxs    uint64
+	AnnounceBlocks uint64
+}
+
 // NewPeer creates a wrapper for a network connection and negotiated  protocol
 // version.
 func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool) *Peer {
@@ -96,6 +104,7 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool) *Pe
 		Peer:            p,
 		rw:              rw,
 		version:         version,
+		stats:           PeerStats{},
 		knownTxs:        newKnownCache(maxKnownTxs),
 		knownBlocks:     newKnownCache(maxKnownBlocks),
 		queuedBlocks:    make(chan *blockPropagation, maxQueuedBlocks),
@@ -158,6 +167,10 @@ func (p *Peer) MarkLagging() {
 	p.lagging = true
 }
 
+func (p *Peer) Stats() PeerStats {
+	return p.stats
+}
+
 // Head retrieves the current head hash and total difficulty of the peer.
 func (p *Peer) Head() (hash common.Hash, td *big.Int) {
 	p.lock.RLock()
@@ -191,6 +204,7 @@ func (p *Peer) KnownTransaction(hash common.Hash) bool {
 func (p *Peer) markBlock(hash common.Hash) {
 	// If we reached the memory allowance, drop a previously known block hash
 	p.knownBlocks.Add(hash)
+	p.stats.SharedBlocks += 1
 }
 
 // markTransaction marks a transaction as known for the peer, ensuring that it
@@ -198,6 +212,7 @@ func (p *Peer) markBlock(hash common.Hash) {
 func (p *Peer) markTransaction(hash common.Hash) {
 	// If we reached the memory allowance, drop a previously known transaction hash
 	p.knownTxs.Add(hash)
+	p.stats.SharedTxs += 1
 }
 
 // SendTransactions sends transactions to the peer and includes the hashes
@@ -213,6 +228,7 @@ func (p *Peer) SendTransactions(txs types.Transactions) error {
 	// Mark all the transactions as known, but ensure we don't overflow our limits
 	for _, tx := range txs {
 		p.knownTxs.Add(tx.Hash())
+		p.stats.AnnounceTxs += 1
 	}
 	return p2p.Send(p.rw, TransactionsMsg, txs)
 }
@@ -225,6 +241,7 @@ func (p *Peer) AsyncSendTransactions(hashes []common.Hash) {
 	case p.txBroadcast <- hashes:
 		// Mark all the transactions as known, but ensure we don't overflow our limits
 		p.knownTxs.Add(hashes...)
+		p.stats.AnnounceTxs += 1
 	case <-p.txTerm:
 		p.Log().Debug("Dropping transaction propagation", "count", len(hashes))
 	case <-p.term:
@@ -242,6 +259,7 @@ func (p *Peer) AsyncSendTransactions(hashes []common.Hash) {
 func (p *Peer) sendPooledTransactionHashes(hashes []common.Hash, types []byte, sizes []uint32) error {
 	// Mark all the transactions as known, but ensure we don't overflow our limits
 	p.knownTxs.Add(hashes...)
+	p.stats.AnnounceTxs += 1
 	return p2p.Send(p.rw, NewPooledTransactionHashesMsg, NewPooledTransactionHashesPacket{Types: types, Sizes: sizes, Hashes: hashes})
 }
 
@@ -253,6 +271,7 @@ func (p *Peer) AsyncSendPooledTransactionHashes(hashes []common.Hash) {
 	case p.txAnnounce <- hashes:
 		// Mark all the transactions as known, but ensure we don't overflow our limits
 		p.knownTxs.Add(hashes...)
+		p.stats.AnnounceTxs += 1
 	case <-p.txTerm:
 		p.Log().Debug("Dropping transaction announcement", "count", len(hashes))
 	case <-p.term:
@@ -277,6 +296,7 @@ func (p *Peer) ReplyPooledTransactionsRLP(id uint64, hashes []common.Hash, txs [
 func (p *Peer) SendNewBlockHashes(hashes []common.Hash, numbers []uint64) error {
 	// Mark all the block hashes as known, but ensure we don't overflow our limits
 	p.knownBlocks.Add(hashes...)
+	p.stats.AnnounceBlocks += 1
 
 	request := make(NewBlockHashesPacket, len(hashes))
 	for i := 0; i < len(hashes); i++ {
@@ -294,6 +314,7 @@ func (p *Peer) AsyncSendNewBlockHash(block *types.Block) {
 	case p.queuedBlockAnns <- block:
 		// Mark all the block hash as known, but ensure we don't overflow our limits
 		p.knownBlocks.Add(block.Hash())
+		p.stats.AnnounceBlocks += 1
 	default:
 		p.Log().Debug("Dropping block announcement", "number", block.NumberU64(), "hash", block.Hash())
 	}
@@ -303,6 +324,7 @@ func (p *Peer) AsyncSendNewBlockHash(block *types.Block) {
 func (p *Peer) SendNewBlock(block *types.Block, td *big.Int) error {
 	// Mark all the block hash as known, but ensure we don't overflow our limits
 	p.knownBlocks.Add(block.Hash())
+	p.stats.AnnounceBlocks += 1
 	return p2p.Send(p.rw, NewBlockMsg, &NewBlockPacket{
 		Block:    block,
 		TD:       td,
@@ -317,6 +339,7 @@ func (p *Peer) AsyncSendNewBlock(block *types.Block, td *big.Int) {
 	case p.queuedBlocks <- &blockPropagation{block: block, td: td}:
 		// Mark all the block hash as known, but ensure we don't overflow our limits
 		p.knownBlocks.Add(block.Hash())
+		p.stats.AnnounceBlocks += 1
 	default:
 		p.Log().Debug("Dropping block propagation", "number", block.NumberU64(), "hash", block.Hash())
 	}

@@ -35,7 +35,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/fetcher"
@@ -906,82 +905,37 @@ func (h *handler) queryValidatorNodeIDsMap() map[common.Address][]enode.ID {
 	return nodeIDsMap
 }
 
-// BroadcastTransactions will propagate a batch of transactions
-// - To a square root of all peers for non-blob transactions
-// - And, separately, as announcements to all peers which are not known to
-// already have the given transaction.
+// BroadcastTransactions will propagate a batch of transactions with announcements to peers
 func (h *handler) BroadcastTransactions(txs types.Transactions) {
 	var (
 		blobTxs  int // Number of blob transactions to announce only
 		largeTxs int // Number of large transactions to announce only
+		annCount int // Number of transactions announced across all peers (duplicates included)
 
-		directCount int // Number of transactions sent directly to peers (duplicates included)
-		annCount    int // Number of transactions announced across all peers (duplicates included)
-
-		txset = make(map[*ethPeer][]common.Hash) // Set peer->hash to transfer directly
 		annos = make(map[*ethPeer][]common.Hash) // Set peer->hash to announce
 	)
-	// Broadcast transactions to a batch of peers not knowing about it
-	direct := big.NewInt(int64(math.Sqrt(float64(h.peers.len())))) // Approximate number of peers to broadcast to
-	if direct.BitLen() == 0 {
-		direct = big.NewInt(1)
-	}
-	total := new(big.Int).Exp(direct, big.NewInt(2), nil) // Stabilise total peer count a bit based on sqrt peers
 
-	var (
-		signer = types.LatestSignerForChainID(h.chain.Config().ChainID) // Don't care about chain status, we just need *a* sender
-		hasher = crypto.NewKeccakState()
-		hash   = make([]byte, 32)
-	)
 	for _, tx := range txs {
-		var maybeDirect bool
 		switch {
 		case tx.Type() == types.BlobTxType:
 			blobTxs++
 		case tx.Size() > txMaxBroadcastSize:
 			largeTxs++
-		default:
-			maybeDirect = true
 		}
-		// Send the transaction (if it's small enough) directly to a subset of
-		// the peers that have not received it yet, ensuring that the flow of
-		// transactions is grouped by account to (try and) avoid nonce gaps.
-		//
-		// To do this, we hash the local enode IW with together with a peer's
-		// enode ID together with the transaction sender and broadcast if
-		// `sha(self, peer, sender) mod peers < sqrt(peers)`.
-		for _, peer := range h.peers.peersWithoutTransaction(tx.Hash()) {
-			var broadcast bool
-			if maybeDirect {
-				hasher.Reset()
-				hasher.Write(h.nodeID.Bytes())
-				hasher.Write(peer.Node().ID().Bytes())
 
-				from, _ := types.Sender(signer, tx) // Ignore error, we only use the addr as a propagation target splitter
-				hasher.Write(from.Bytes())
-
-				hasher.Read(hash)
-				if new(big.Int).Mod(new(big.Int).SetBytes(hash), total).Cmp(direct) < 0 {
-					broadcast = true
-				}
-			}
-			if broadcast {
-				txset[peer] = append(txset[peer], tx.Hash())
-			} else {
-				annos[peer] = append(annos[peer], tx.Hash())
-			}
+		peers := h.peers.peersWithoutTransaction(tx.Hash())
+		for _, peer := range peers {
+			annos[peer] = append(annos[peer], tx.Hash())
 		}
 	}
-	for peer, hashes := range txset {
-		directCount += len(hashes)
-		peer.AsyncSendTransactions(hashes)
-	}
+
 	for peer, hashes := range annos {
-		annCount += len(hashes)
 		peer.AsyncSendPooledTransactionHashes(hashes)
+		annCount += len(hashes)
 	}
+
 	log.Debug("Distributed transactions", "plaintxs", len(txs)-blobTxs-largeTxs, "blobtxs", blobTxs, "largetxs", largeTxs,
-		"bcastpeers", len(txset), "bcastcount", directCount, "annpeers", len(annos), "anncount", annCount)
+		"annpeers", len(annos), "anncount", annCount)
 }
 
 // ReannounceTransactions will announce a batch of local pending transactions
