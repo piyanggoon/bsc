@@ -66,7 +66,7 @@ type Peer struct {
 	version         uint              // Protocol version negotiated
 	statusExtension *UpgradeStatusExtension
 
-	stats   PeerStats
+	stats   *PeerStats
 	lagging bool        // lagging peer is still connected, but won't be used to sync.
 	head    common.Hash // Latest advertised head block hash
 	td      *big.Int    // Latest advertised head block total difficulty
@@ -104,7 +104,7 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool) *Pe
 		Peer:            p,
 		rw:              rw,
 		version:         version,
-		stats:           PeerStats{},
+		stats:           &PeerStats{},
 		knownTxs:        newKnownCache(maxKnownTxs),
 		knownBlocks:     newKnownCache(maxKnownBlocks),
 		queuedBlocks:    make(chan *blockPropagation, maxQueuedBlocks),
@@ -167,7 +167,7 @@ func (p *Peer) MarkLagging() {
 	p.lagging = true
 }
 
-func (p *Peer) Stats() PeerStats {
+func (p *Peer) Stats() *PeerStats {
 	return p.stats
 }
 
