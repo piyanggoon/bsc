@@ -95,8 +95,14 @@ func (h *evictHeap) Less(i, j int) bool {
 	lastI := txsI[len(txsI)-1]
 	lastJ := txsJ[len(txsJ)-1]
 
-	prioI := min(evictionPriority(h.basefeeJumps, lastI.evictionExecFeeJumps, h.blobfeeJumps, lastI.evictionBlobFeeJumps), 0)
-	prioJ := min(evictionPriority(h.basefeeJumps, lastJ.evictionExecFeeJumps, h.blobfeeJumps, lastJ.evictionBlobFeeJumps), 0)
+	prioI := evictionPriority(h.basefeeJumps, lastI.evictionExecFeeJumps, h.blobfeeJumps, lastI.evictionBlobFeeJumps)
+	if prioI > 0 {
+		prioI = 0
+	}
+	prioJ := evictionPriority(h.basefeeJumps, lastJ.evictionExecFeeJumps, h.blobfeeJumps, lastJ.evictionBlobFeeJumps)
+	if prioJ > 0 {
+		prioJ = 0
+	}
 	if prioI == prioJ {
 		return lastI.evictionExecTip.Lt(lastJ.evictionExecTip)
 	}

@@ -52,7 +52,7 @@ func (n *Node) apis() []rpc.API {
 }
 
 // adminAPI is the collection of administrative API methods exposed over
-// both secure and insecure RPC channels.
+// both secure and unsecure RPC channels.
 type adminAPI struct {
 	node *Node // Node interfaced by this API
 }

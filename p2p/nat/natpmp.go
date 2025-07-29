@@ -72,7 +72,7 @@ func (n *pmp) DeleteMapping(protocol string, extport, intport int) (err error) {
 }
 
 func (n *pmp) MarshalText() ([]byte, error) {
-	return fmt.Appendf(nil, "natpmp:%v", n.gw), nil
+	return []byte(fmt.Sprintf("natpmp:%v", n.gw)), nil
 }
 
 func discoverPMP() Interface {

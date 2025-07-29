@@ -2,7 +2,6 @@ package eth
 
 import (
 	"reflect"
-	"slices"
 	"testing"
 
 	"sync/atomic"
@@ -349,5 +348,10 @@ func existProxyedValidator(ps *mockPeerSet, address common.Address, proxyedList 
 
 // contains checks if a string slice contains a specific string
 func contains(slice []string, str string) bool {
-	return slices.Contains(slice, str)
+	for _, s := range slice {
+		if s == str {
+			return true
+		}
+	}
+	return false
 }

@@ -80,6 +80,10 @@ type Config struct {
 	// maintained and re-connected on disconnects.
 	StaticNodes []*enode.Node
 
+	// Verify nodes are used as pre-configured connections which are always
+	// maintained and re-connected on disconnects.
+	VerifyNodes []*enode.Node
+
 	// Trusted nodes are used as pre-configured connections which are always
 	// allowed to connect, even above the peer limit.
 	TrustedNodes []*enode.Node

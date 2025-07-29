@@ -39,7 +39,7 @@ var (
 	bidSim1stBidTimer    = metrics.NewRegisteredTimer("bid/sim/sim1stBid", nil)
 	bidSimTimer          = metrics.NewRegisteredTimer("bid/sim/duration", nil)
 
-	simulateSpeedGauge = metrics.NewRegisteredGauge("bid/sim/simulateSpeed", nil) // mgasps
+	simulateSpeedGauge = metrics.NewRegisteredGauge("bid/sim/simulateSpeed", nil) // Mps
 
 	bidSimTimeoutCounter = metrics.NewRegisteredCounter("bid/sim/simTimeout", nil)
 )
@@ -63,8 +63,7 @@ var (
 		Timeout:   5 * time.Second,
 		Transport: transport,
 	}
-	errBetterBid  = errors.New("simulation abort due to better bid arrived")
-	errNoTimeLeft = errors.New("bid discarded due to lack of simulation time")
+	errBetterBid = errors.New("simulation abort due to better bid arrived")
 )
 
 type bidWorker interface {
@@ -407,6 +406,10 @@ func (b *bidSimulator) newBidLoop() {
 		}
 	}
 
+	genDiscardedReply := func(betterBid *BidRuntime) error {
+		return fmt.Errorf("bid is discarded, current bestBid is [blockReward: %s, validatorReward: %s]", betterBid.expectedBlockReward, betterBid.expectedValidatorReward)
+	}
+
 	for {
 		select {
 		case newBid := <-b.newBidCh:
@@ -432,7 +435,6 @@ func (b *bidSimulator) newBidLoop() {
 
 			var replyErr error
 			toCommit := true
-			bidAcceptted := true
 			bestBidToRun := b.GetBestBidToRun(newBid.bid.ParentHash)
 			if bestBidToRun != nil {
 				bestBidRuntime, _ := newBidRuntime(bestBidToRun, *b.config.ValidatorCommission)
@@ -443,13 +445,13 @@ func (b *bidSimulator) newBidLoop() {
 				} else if !bestBidToRun.IsCommitted() {
 					// bestBidToRun is not committed yet, this newBid will trigger bestBidToRun to commit
 					bidRuntime = bestBidRuntime
-					bidAcceptted = false
+					replyErr = genDiscardedReply(bidRuntime)
 					log.Debug("discard new bid and to simulate the non-committed bestBidToRun",
 						"builder", bestBidToRun.Builder, "bidHash", bestBidToRun.Hash().TerminalString())
 				} else {
 					// new bid will be discarded, as it is useless now.
 					toCommit = false
-					bidAcceptted = false
+					replyErr = genDiscardedReply(bestBidRuntime)
 					log.Debug("new bid will be discarded", "builder", bestBidToRun.Builder,
 						"bidHash", bestBidToRun.Hash().TerminalString())
 				}
@@ -491,7 +493,7 @@ func (b *bidSimulator) newBidLoop() {
 				log.Info("[BID ARRIVED]",
 					"block", newBid.bid.BlockNumber,
 					"builder", newBid.bid.Builder,
-					"accepted", bidAcceptted,
+					"accepted", replyErr == nil,
 					"blockReward", weiToEtherStringF6(bidRuntime.expectedBlockReward),
 					"validatorReward", weiToEtherStringF6(bidRuntime.expectedValidatorReward),
 					"tx", len(newBid.bid.Txs),
@@ -683,7 +685,7 @@ func (b *bidSimulator) simBid(interruptCh chan int32, bidRuntime *BidRuntime) {
 		if err != nil {
 			logCtx = append(logCtx, "err", err)
 			log.Info("BidSimulator: simulation failed", logCtx...)
-			if !errors.Is(errBetterBid, err) && !errors.Is(errNoTimeLeft, err) {
+			if err != errBetterBid {
 				go b.reportIssue(bidRuntime, err)
 			}
 		}
@@ -695,9 +697,6 @@ func (b *bidSimulator) simBid(interruptCh chan int32, bidRuntime *BidRuntime) {
 			b.DelBestBidToRun(parentHash, bidRuntime.bid)
 		}
 
-		if err != nil {
-			return
-		}
 		// only recommit last best bid when newBidCh is empty
 		if len(b.newBidCh) > 0 {
 			return
@@ -725,7 +724,7 @@ func (b *bidSimulator) simBid(interruptCh chan int32, bidRuntime *BidRuntime) {
 	// if the left time is not enough to do simulation, return
 	delay := b.engine.Delay(b.chain, bidRuntime.env.header, &b.delayLeftOver)
 	if delay == nil || *delay <= 0 {
-		err = errNoTimeLeft
+		log.Info("BidSimulator: abort commit, no time to begin simulating")
 		return
 	}
 
@@ -798,7 +797,7 @@ func (b *bidSimulator) simBid(interruptCh chan int32, bidRuntime *BidRuntime) {
 	delay = b.engine.Delay(b.chain, bidRuntime.env.header, &b.delayLeftOver)
 	if delay != nil && *delay < 0 {
 		bidSimTimeoutCounter.Inc(1)
-		err = errNoTimeLeft
+		log.Info("BidSimulator: fail to commit, timeout when simulating completed")
 		return
 	}
 
@@ -908,7 +907,7 @@ func (b *bidSimulator) simBid(interruptCh chan int32, bidRuntime *BidRuntime) {
 	}
 	const minGasForSpeedMetric = 30_000_000
 	if bidRuntime.bid.GasUsed > minGasForSpeedMetric {
-		timeCostMs := (simElapsed - greedyMergeElapsed).Milliseconds()
+		timeCostMs := (simElapsed - greedyMergeElapsed).Microseconds()
 		if timeCostMs > 0 {
 			simulateSpeedGauge.Update(int64(float64(bidRuntime.bid.GasUsed) / float64(timeCostMs) / 1000))
 		}

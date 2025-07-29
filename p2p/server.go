@@ -142,6 +142,7 @@ const (
 	staticDialedConn
 	inboundConn
 	trustedConn
+	verifyConn
 )
 
 // conn wraps a network connection with information gathered
@@ -192,6 +193,9 @@ func (f connFlag) String() string {
 	}
 	if f&inboundConn != 0 {
 		s += "-inbound"
+	}
+	if f&verifyConn != 0 {
+		s += "-verify"
 	}
 	if s != "" {
 		s = s[1:]
@@ -583,6 +587,9 @@ func (srv *Server) setupDialScheduler() {
 	for _, n := range srv.StaticNodes {
 		srv.dialsched.addStatic(n)
 	}
+	for _, n := range srv.VerifyNodes {
+		srv.dialsched.addStatic(n)
+	}
 }
 
 func (srv *Server) maxInboundConns() int {
@@ -595,7 +602,7 @@ func (srv *Server) SetFilter(f forkid.Filter) {
 
 func (srv *Server) maxDialedConns() (limit int) {
 	if srv.NoDial {
-		return len(srv.StaticNodes)
+		return len(srv.StaticNodes) + len(srv.VerifyNodes)
 	}
 	if srv.MaxPeers == 0 {
 		return 0
@@ -931,6 +938,13 @@ func (srv *Server) checkInboundConn(remoteIP netip.Addr) error {
 // as a peer. It returns when the connection has been added as a peer
 // or the handshakes have failed.
 func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) error {
+	// If dialDest is verify node, set verifyConn flags.
+	for _, n := range srv.VerifyNodes {
+		if dialDest.ID() == n.ID() {
+			flags |= verifyConn
+		}
+	}
+
 	c := &conn{fd: fd, flags: flags, cont: make(chan error)}
 	if dialDest == nil {
 		c.transport = srv.newTransport(fd, nil)

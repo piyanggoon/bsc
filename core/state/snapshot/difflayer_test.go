@@ -19,7 +19,6 @@ package snapshot
 import (
 	"bytes"
 	crand "crypto/rand"
-	"maps"
 	"math/rand"
 	"testing"
 
@@ -31,7 +30,9 @@ import (
 
 func copyAccounts(accounts map[common.Hash][]byte) map[common.Hash][]byte {
 	copy := make(map[common.Hash][]byte)
-	maps.Copy(copy, accounts)
+	for hash, blob := range accounts {
+		copy[hash] = blob
+	}
 	return copy
 }
 
@@ -39,7 +40,9 @@ func copyStorage(storage map[common.Hash]map[common.Hash][]byte) map[common.Hash
 	copy := make(map[common.Hash]map[common.Hash][]byte)
 	for accHash, slots := range storage {
 		copy[accHash] = make(map[common.Hash][]byte)
-		maps.Copy(copy[accHash], slots)
+		for slotHash, blob := range slots {
+			copy[accHash][slotHash] = blob
+		}
 	}
 	return copy
 }
